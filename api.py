@@ -12,8 +12,7 @@ os.environ['YDL_OPTS'] = '--no-check-certificates --geo-bypass'
 
 app = Flask(__name__)
 
-# >>>>> CORS FIX FOR HOSTINGER <<<<<
-# Is se Hostinger ki website ko backend use karne ki permission mil jayegi
+# CORS for Hostinger and All Origins
 CORS(app, resources={r"/api/*": {"origins": "*"}}) 
 
 DOWNLOAD_DIR = 'downloads'
@@ -27,7 +26,6 @@ def sanitize_filename(filename):
 
 @app.route('/api/download', methods=['POST', 'OPTIONS'])
 def download_video():
-    # OPTIONS request handle karne ke liye (Browser pre-flight check)
     if request.method == 'OPTIONS':
         return jsonify({"status": "ok"}), 200
 
@@ -44,7 +42,10 @@ def download_video():
             'quiet': True,
             'nocheckcertificate': True,
             'skip_download': True,
+            # Bot bypass for info extraction
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
+        
         with YoutubeDL(ydl_opts_info) as ydl:
             info_dict = ydl.extract_info(video_url, download=False)
         
@@ -57,14 +58,23 @@ def download_video():
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
 
-        # Step 2: Download Options (Strict Non-FFmpeg)
+        # Step 2: Download Options (Bot Bypass + No-FFmpeg)
         ydl_opts_download = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'best[ext=mp4]/best', 
             'outtmpl': os.path.join(temp_dir, f"{clean_title}.%(ext)s"),
             'nocheckcertificate': True,
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': True,
+            'postprocessors': [],
+            # >>>>> BYPASS SETTINGS <<<<<
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            }
         }
         
         # Step 3: Download
@@ -73,14 +83,12 @@ def download_video():
             
         downloaded_files = os.listdir(temp_dir)
         if not downloaded_files:
-            raise Exception("No file downloaded")
+            raise Exception("YouTube blocked this request or Link invalid.")
             
         full_path = os.path.join(temp_dir, downloaded_files[0])
 
         # Step 4: Send File
         response = send_file(full_path, as_attachment=True)
-        
-        # CORS Headers manually add karna (Extra Safety)
         response.headers.add("Access-Control-Allow-Origin", "*")
 
         @response.call_on_close
@@ -96,4 +104,5 @@ def download_video():
         return jsonify({"success": False, "message": str(e)}), 400
 
 if __name__ == '__main__':
-    app.run()
+    # Render handles port binding automatically
+    pass
