@@ -6,23 +6,19 @@ import re
 import shutil
 from datetime import datetime
 
-# Render Stability Settings
-os.environ['YDL_NO_CACHE_DIR'] = 'true'
-os.environ['YDL_OPTS'] = '--no-check-certificates --geo-bypass'
-
 app = Flask(__name__)
-
-# CORS for Hostinger and All Origins
+# CORS Fix for all origins
 CORS(app, resources={r"/api/*": {"origins": "*"}}) 
 
-DOWNLOAD_DIR = 'downloads'
+# Render par hamesha '/tmp' folder use karna chahiye files save karne ke liye
+DOWNLOAD_DIR = '/tmp/downloads'
 if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def sanitize_filename(filename):
     safe_filename = re.sub(r'[\\/:*?"<>|]', '', filename)
     safe_filename = re.sub(r'[^\w\s-]', '', safe_filename).strip()
-    return safe_filename
+    return safe_filename or "video_file"
 
 @app.route('/api/download', methods=['POST', 'OPTIONS'])
 def download_video():
@@ -37,72 +33,50 @@ def download_video():
     temp_dir = None 
 
     try:
-        # Step 1: Info Extraction
-        ydl_opts_info = {
-            'quiet': True,
-            'nocheckcertificate': True,
-            'skip_download': True,
-            # Bot bypass for info extraction
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        with YoutubeDL(ydl_opts_info) as ydl:
-            info_dict = ydl.extract_info(video_url, download=False)
-        
-        raw_title = info_dict.get('title', 'media_file')
-        clean_title = sanitize_filename(raw_title)
-        
-        temp_folder_name = f'temp_{clean_title[:15]}_{datetime.now().strftime("%H%M%S")}'
+        # Step 1: Options for Extraction & Download
+        # Humne Extraction aur Download ko ek hi step mein kar diya hai stability ke liye
+        temp_folder_name = f"dir_{datetime.now().strftime('%H%M%S')}"
         temp_dir = os.path.join(DOWNLOAD_DIR, temp_folder_name)
-        
-        if not os.path.exists(temp_dir):
-            os.makedirs(temp_dir)
+        os.makedirs(temp_dir, exist_ok=True)
 
-        # Step 2: Download Options (Bot Bypass + No-FFmpeg)
-        ydl_opts_download = {
-            'format': 'best[ext=mp4]/best', 
-            'outtmpl': os.path.join(temp_dir, f"{clean_title}.%(ext)s"),
+        ydl_opts = {
+            # Sab se asaan format jo bina FFmpeg ke chale
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': os.path.join(temp_dir, '%(title).200s.%(ext)s'),
             'nocheckcertificate': True,
             'quiet': True,
             'no_warnings': True,
-            'ignoreerrors': True,
-            'postprocessors': [],
-            # >>>>> BYPASS SETTINGS <<<<<
+            'ignoreerrors': False,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios'],
-                    'player_skip': ['webpage', 'configs'],
-                }
-            }
+            # Mobile client use karna taake YouTube block na kare
+            'extractor_args': {'youtube': {'player_client': ['android']}},
         }
         
-        # Step 3: Download
-        with YoutubeDL(ydl_opts_download) as ydl_download:
-            ydl_download.download([video_url])
+        with YoutubeDL(ydl_opts) as ydl:
+            # Seedha download shuru karein
+            ydl.download([video_url])
             
-        downloaded_files = os.listdir(temp_dir)
-        if not downloaded_files:
-            raise Exception("YouTube blocked this request or Link invalid.")
+        # Check karein ke file kahan hai
+        files = os.listdir(temp_dir)
+        if not files:
+            raise Exception("Server could not save the video. IP might be blocked.")
             
-        full_path = os.path.join(temp_dir, downloaded_files[0])
+        full_path = os.path.join(temp_dir, files[0])
 
-        # Step 4: Send File
-        response = send_file(full_path, as_attachment=True)
-        response.headers.add("Access-Control-Allow-Origin", "*")
-
-        @response.call_on_close
-        def cleanup():
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-        
-        return response
+        # Step 2: File bhejien
+        return send_file(
+            full_path, 
+            as_attachment=True, 
+            download_name=files[0]
+        )
 
     except Exception as e:
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
         return jsonify({"success": False, "message": str(e)}), 400
 
+    finally:
+        # Note: 'finally' mein cleanup thora risk hota hai, 
+        # isliye cleanup handle karne ka behtar tareeqa bad mein dekhenge
+        pass
+
 if __name__ == '__main__':
-    # Render handles port binding automatically
     pass
