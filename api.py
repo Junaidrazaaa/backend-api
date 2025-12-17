@@ -1,16 +1,23 @@
 from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS 
+from flask_cors import CORS
 from yt_dlp import YoutubeDL
 import os
 import re
 import shutil
 from datetime import datetime
 
-app = Flask(__name__)
-# CORS ko React ke local host (http://localhost:3000) ke liye enable kar dein
-CORS(app) 
-PORT = 5000
+# >>>>> RENDER/YOUTUBE/FACEBOOK FIX (Environment Variables) <<<<<
+# Render par stability ke liye, hum in variables ko Python code mein set kar rahe hain.
+# Agar aapne ye Render dashboard mein set kar diye hain, tab bhi yahan rakhna safe hai.
+os.environ['YDL_NO_CACHE_DIR'] = 'true'
+os.environ['YDL_OPTS'] = '--no-check-certificates --geo-bypass'
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
+app = Flask(__name__)
+# CORS ko React ke live host aur local host (agar testing kar rahe hon) ke liye enable kar dein
+CORS(app) 
+
+# Download directory
 DOWNLOAD_DIR = 'downloads'
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
@@ -25,6 +32,7 @@ def sanitize_filename(filename):
 # API Endpoint: /api/download
 @app.route('/api/download', methods=['POST'])
 def download_video():
+    # Zaroori: JSON data theek se extract karna
     data = request.get_json()
     video_url = data.get('url')
 
@@ -52,15 +60,15 @@ def download_video():
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
 
-        # Step 2: Download Options set karna (NO MERGING REQUIRED)
+        # Step 2: Download Options set karna
         ydl_opts_download = {
-            # FIX: Simple 'best' format use karen taake merging ki zaroorat na pare (No FFmpeg)
-            'format': 'best', 
+            # FIX: FFmpeg merging se bachne ke liye, best single-stream MP4 ko target karen
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', 
             'outtmpl': os.path.join(temp_dir, f"{clean_title}.%(ext)s"),
             'nocheckcertificate': True,
             'quiet': True,
-            # Reddit specific fix: Agar format available nahi hai, toh error na de
             'ignoreerrors': True,
+            'noplaylist': True,
         }
         
         # Step 3: Video download karna
@@ -80,23 +88,24 @@ def download_video():
 
         # Step 4: Downloaded file ko browser par send karna
         response = send_file(full_path, 
-                              as_attachment=True, 
-                              download_name=final_filename_with_ext)
+                             as_attachment=True, 
+                             download_name=final_filename_with_ext)
 
-        # Download transfer hone ke baad temp folder ko delete karna
+        # Download transfer hone ke baad temp folder ko delete karna (Render par zaroori)
         @response.call_on_close
         def cleanup():
             try:
                 shutil.rmtree(temp_dir)
-                print(f"Temporary folder deleted: {temp_dir}")
+                # print(f"Temporary folder deleted: {temp_dir}") # Render logs mein print hoga
             except Exception as e:
-                print(f"Cleanup Error: {e}")
+                # print(f"Cleanup Error: {e}")
+                pass
         
         return response
 
     except Exception as e:
         error_message = f"Download Error: {e}"
-        print(error_message)
+        # print(error_message)
         
         # Cleanup agar error ho
         if temp_dir and os.path.exists(temp_dir):
@@ -105,9 +114,13 @@ def download_video():
         # Error hone par 400 status code aur JSON data bhej rahe hain
         return jsonify({
             "success": False, 
-            "message": "Error: Link invalid, private video, ya aapke device par is format ki video download nahi ho saki."
+            "message": "Error: Link invalid, private video, ya aapke device par is format ki video download nahi ho saki. (API: " + str(e)[:30] + ")"
         }), 400 
 
 if __name__ == '__main__':
-    print(f"Flask API is starting on http://127.0.0.1:{PORT}")
-    app.run(debug=True, port=PORT)
+    # Render is line ko ignore karta hai, yeh sirf local testing ke liye hai
+    PORT = int(os.environ.get('PORT', 5000))
+    # print(f"Flask API is starting on http://127.0.0.1:{PORT}")
+    # app.run(debug=True, port=PORT) 
+    # NOTE: Render gunicorn use karta hai, isliye hum is line ko comment rakhenge
+    pass
