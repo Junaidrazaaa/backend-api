@@ -6,33 +6,24 @@ import re
 import shutil
 from datetime import datetime
 
-# >>>>> RENDER/YOUTUBE/FACEBOOK FIX (Environment Variables) <<<<<
-# Render par stability ke liye, hum in variables ko Python code mein set kar rahe hain.
-# Agar aapne ye Render dashboard mein set kar diye hain, tab bhi yahan rakhna safe hai.
+# Render Stability Settings
 os.environ['YDL_NO_CACHE_DIR'] = 'true'
 os.environ['YDL_OPTS'] = '--no-check-certificates --geo-bypass'
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 app = Flask(__name__)
-# CORS ko React ke live host aur local host (agar testing kar rahe hon) ke liye enable kar dein
 CORS(app) 
 
-# Download directory
 DOWNLOAD_DIR = 'downloads'
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
-# File name se illegal characters hatane ka function
 def sanitize_filename(filename):
-    # Illegal characters ko hata kar sirf alphanumeric aur spaces rehne de
     safe_filename = re.sub(r'[\\/:*?"<>|]', '', filename)
     safe_filename = re.sub(r'[^\w\s-]', '', safe_filename).strip()
     return safe_filename
 
-# API Endpoint: /api/download
 @app.route('/api/download', methods=['POST'])
 def download_video():
-    # Zaroori: JSON data theek se extract karna
     data = request.get_json()
     video_url = data.get('url')
 
@@ -41,7 +32,7 @@ def download_video():
 
     temp_dir = None 
     try:
-        # Step 1: Video ki information extract karna
+        # Step 1: Info Extraction
         ydl_opts_info = {
             'quiet': True,
             'nocheckcertificate': True,
@@ -53,74 +44,62 @@ def download_video():
         raw_title = info_dict.get('title', 'media_file')
         clean_title = sanitize_filename(raw_title)
         
-        # Temporary folder banana
         temp_folder_name = f'temp_{clean_title[:20]}_{datetime.now().strftime("%Y%m%d%H%M%S")}'
         temp_dir = os.path.join(DOWNLOAD_DIR, temp_folder_name)
         
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
 
-        # Step 2: Download Options set karna
+        # Step 2: Download Options (STRICT NON-FFMPEG MODE)
         ydl_opts_download = {
-            # FIX: FFmpeg merging se bachne ke liye, best single-stream MP4 ko target karen
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', 
+            # FIX: Sirf wahi format download hoga jisme audio+video pehle se ek saath ho
+            # Is se FFmpeg ki zaroorat nahi paregi
+            'format': 'best[ext=mp4]/best', 
             'outtmpl': os.path.join(temp_dir, f"{clean_title}.%(ext)s"),
             'nocheckcertificate': True,
             'quiet': True,
             'ignoreerrors': True,
             'noplaylist': True,
+            'postprocessors': [], # No merging/post-processing
         }
         
-        # Step 3: Video download karna
+        # Step 3: Download
         with YoutubeDL(ydl_opts_download) as ydl_download:
             ydl_download.download([video_url])
             
-        # Downloaded file ka poora naam dhundhna
         downloaded_files = [f for f in os.listdir(temp_dir) if f.startswith(clean_title)]
         
-        # Agar koi file nahi mili toh exception throw karen
         if not downloaded_files:
-            raise Exception("File download hone ke baad mili nahi ya link supported nahi.")
+            raise Exception("File download fail ho gayi. Link shayad private hai ya supported nahi.")
             
         final_filename_with_ext = downloaded_files[0]
         full_path = os.path.join(temp_dir, final_filename_with_ext)
 
-
-        # Step 4: Downloaded file ko browser par send karna
+        # Step 4: Send File
         response = send_file(full_path, 
                              as_attachment=True, 
                              download_name=final_filename_with_ext)
 
-        # Download transfer hone ke baad temp folder ko delete karna (Render par zaroori)
         @response.call_on_close
         def cleanup():
             try:
                 shutil.rmtree(temp_dir)
-                # print(f"Temporary folder deleted: {temp_dir}") # Render logs mein print hoga
-            except Exception as e:
-                # print(f"Cleanup Error: {e}")
+            except Exception:
                 pass
         
         return response
 
     except Exception as e:
-        error_message = f"Download Error: {e}"
-        # print(error_message)
-        
-        # Cleanup agar error ho
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
             
-        # Error hone par 400 status code aur JSON data bhej rahe hain
         return jsonify({
             "success": False, 
-            "message": "Error: Link invalid, private video, ya aapke device par is format ki video download nahi ho saki. (API: " + str(e)[:30] + ")"
+            "message": f"Download Error: {str(e)[:50]}"
         }), 400 
 
 if __name__ == '__main__':
-    # Render is line ko ignore karta hai, yeh sirf local testing ke liye hai
-    PORT = int(os.environ.get('PORT', 5000))
-    # print(f"Flask API is starting on http://127.0.0.1:{PORT}")
-    # app.run(debug=True, port=PORT) 
-    # NOTE: Render gunicorn use karta hai, isliye hum is line ko comment rakhenge
+    # Local testing ke liye
+    port = int(os.environ.get('PORT', 5000))
+    # app.run(debug=True, port=port)
     pass
